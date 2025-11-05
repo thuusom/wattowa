@@ -1,0 +1,31 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# docker-compose.yml
+# ─────────────────────────────────────────────────────────────────────────────
+# Spin up Qdrant (vector DB) and the API service
+
+services:
+  qdrant:
+    image: qdrant/qdrant:latest
+    restart: unless-stopped
+    ports:
+      - "${QDRANT_PORT}:6333"
+    volumes:
+      - qdrant_storage:/qdrant/storage
+
+  api:
+    build: .
+    container_name: tvrec-api
+    env_file:
+      - .env
+    restart: unless-stopped
+    depends_on:
+      - qdrant
+    volumes:
+      - hf_cache:/root/.cache/huggingface   # persists model files
+    ports:
+      - "${API_PORT}:8000"
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+
+volumes:
+  qdrant_storage:
+  hf_cache:
