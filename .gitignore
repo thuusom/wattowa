@@ -46,3 +46,5 @@ qdrant_data/
 # Model cache (optional - uncomment if you don't want to track model downloads)
 # .cache/
 
+# EPG data
+data/epg.json

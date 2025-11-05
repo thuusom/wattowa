@@ -2,6 +2,7 @@
 # app/main.py (FastAPI service)
 # ─────────────────────────────────────────────────────────────────────────────
 
+import asyncio
 import os
 from typing import List, Optional
 
@@ -148,9 +149,14 @@ async def upsert(item: UpsertItem):
     client = get_client()
     model = get_model()
     text = build_signature(item.title, item.description, None, None)
-    vec = model.encode(text).tolist()
+    
+    # Run encoding in a thread pool to avoid blocking the event loop
+    vec = await asyncio.to_thread(model.encode, text)
+    vec = vec.tolist()
 
-    client.upsert(
+    # Run Qdrant upsert in a thread pool as well
+    await asyncio.to_thread(
+        client.upsert,
         collection_name=COLLECTION_NAME,
         points=[
             {
@@ -189,12 +195,10 @@ async def bulk_ingest(items: List[BulkIngestItem]):
     total = len(items)
     index = 0
 
-    while index < total:
-        batch = items[index:index+BATCH_SIZE]
-        print(f"[bulk_ingest] batching {index}-{index+len(batch)-1}")
-
+    def encode_batch(batch_items):
+        """Encode a batch of items in a separate thread to avoid blocking the event loop."""
         points = []
-        for it in batch:
+        for it in batch_items:
             cid = it.guid
             text = build_signature(it.title, it.description, None, None)
             vec = model.encode(text).tolist()
@@ -213,10 +217,22 @@ async def bulk_ingest(items: List[BulkIngestItem]):
                     "start_time": iso_time,
                 }
             })
+        return points
+
+    while index < total:
+        batch = items[index:index+BATCH_SIZE]
+        print(f"[bulk_ingest] batching {index}-{index+len(batch)-1}")
+
+        # Run encoding in a thread pool to avoid blocking the event loop
+        points = await asyncio.to_thread(encode_batch, batch)
 
         print(f"[bulk_ingest] upserting batch of {len(points)}")
-        client.upsert(collection_name=COLLECTION_NAME, points=points)
+        # Run Qdrant upsert in a thread pool as well
+        await asyncio.to_thread(client.upsert, collection_name=COLLECTION_NAME, points=points)
         index += len(batch)
+        
+        # Yield control to allow other requests to be processed
+        await asyncio.sleep(0)
 
     print("[bulk_ingest] DONE")
     return JSONResponse({"status": "ok", "count": total})
